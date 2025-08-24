@@ -1,0 +1,126 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pull # Lookup — OCR App</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background:#0d1117; color:#eee; text-align:center; padding:20px; }
+    input, button { margin:6px; padding:8px; font-size:16px; }
+    button { background:#007bff; color:#fff; border:none; border-radius:6px; }
+    .ok { color:#8ef59a; font-weight:bold; }
+    .err { color:#ff7b7b; font-size:14px; margin-top:6px; }
+    .result { margin-top:20px; font-size:18px; border:1px solid #333; padding:12px; border-radius:8px; }
+  </style>
+</head>
+<body>
+  <h2>Pull # Lookup — OCR App (Multi-core)</h2>
+
+  <p><strong>Step 1:</strong> Load OCR engine (files must be hosted in the same folder).</p>
+  <button id="btnInit">Init OCR</button>
+  <div id="ocrState">Waiting…</div>
+  <div id="err" class="err"></div>
+
+  <hr>
+
+  <p><strong>Step 2:</strong> Upload your CSV or load a sample:</p>
+  <input type="file" id="csvFile" accept=".csv"><br>
+  <button id="btnSample">Load sample</button>
+  <div id="status"></div>
+
+  <p><strong>Step 3:</strong> Enter LDU or use OCR:</p>
+  <input type="text" id="ldu" placeholder="Enter LDU (last 3)">
+  <button id="btnSearch">Search</button><br>
+  <button id="btnCamera">Scan with Camera</button>
+  <button id="btnImage">Choose Image</button>
+
+  <div id="result" class="result" style="display:none"></div>
+
+<script src="tesseract.min.js"></script>
+<script>
+let data=[], worker=null;
+
+// ========== INIT OCR ==========
+async function initOCR(){
+  try {
+    document.getElementById('err').textContent="";
+    document.getElementById('ocrState').textContent="Loading Tesseract…";
+
+    worker = await Tesseract.createWorker("eng", 1, {
+      workerPath: "worker.min.js",
+      corePath: "core/"   // <── directory with 4 core files
+    });
+
+    document.getElementById('ocrState').innerHTML = "<span class='ok'>OCR ready ✅</span>";
+  } catch(e){
+    document.getElementById('err').textContent = "Init failed: "+e.message;
+    document.getElementById('ocrState').textContent="Error ❌";
+  }
+}
+document.getElementById('btnInit').addEventListener('click', initOCR);
+
+// ========== CSV LOAD ==========
+document.getElementById('csvFile').addEventListener('change', e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    const lines = ev.target.result.split(/\r?\n/);
+    const headers = lines[0].split(",");
+    const depot = headers.indexOf("Depot");
+    const route = headers.indexOf("Route");
+    const street= headers.indexOf("Street");
+    const range = headers.indexOf("Address Range");
+    const ldu   = headers.indexOf("LDU");
+    const pull  = headers.indexOf("Pull #");
+    data = lines.slice(1).map(row=>{
+      const c=row.split(",");
+      return {Depot:c[depot], Route:c[route], Street:c[street], Range:c[range], LDU:(c[ldu]||"").trim().toUpperCase(), Pull:c[pull]};
+    }).filter(x=>x.Depot && x.LDU && x.Pull);
+    document.getElementById('status').textContent="CSV loaded ("+data.length+" rows)";
+  };
+  r.readAsText(f);
+});
+document.getElementById('btnSample').addEventListener('click', ()=>{
+  data=[{Depot:"Whiterock",Route:"LC0008",Street:"16 Ave",Range:"1500-1598",LDU:"1C2",Pull:"7"}];
+  document.getElementById('status').textContent="Sample loaded. Try LDU 1C2.";
+});
+
+// ========== SEARCH ==========
+document.getElementById('btnSearch').addEventListener('click', ()=>{
+  const ldu=document.getElementById('ldu').value.trim().toUpperCase();
+  const hit=data.find(r=>r.LDU===ldu);
+  if(hit){ showResult(hit); } 
+  else { document.getElementById('result').style.display="block"; document.getElementById('result').textContent="No match."; }
+});
+function showResult(r){
+  const box=document.getElementById('result'); box.style.display="block";
+  box.innerHTML=`${r.Route} • ${r.Street} ${r.Range||''}<br>LDU ${r.LDU}<br><strong>Pull # ${r.Pull}</strong>`;
+}
+
+// ========== OCR IMAGE ==========
+async function recognizeFile(file){
+  if(!worker){ document.getElementById('err').textContent="Init OCR first"; return; }
+  const img=new Image(); img.onload=async()=>{
+    const ret=await worker.recognize(img);
+    const text=(ret.data.text||"").toUpperCase();
+    const m=text.match(/[ABCEGHJKLMNPRSTVXY]\d[ABCEGHJKLMNPRSTVWXYZ]\s?\d[ABCEGHJKLMNPRSTVWXYZ]\d/);
+    if(!m){ document.getElementById('err').textContent="No postal code found"; return; }
+    const ldu=m[0].replace(/\s/g,"").slice(-3);
+    document.getElementById('ldu').value=ldu;
+    document.getElementById('status').textContent="OCR detected LDU: "+ldu;
+  };
+  img.src=URL.createObjectURL(file);
+}
+document.getElementById('btnImage').addEventListener('click', ()=>{
+  const i=document.createElement('input'); i.type='file'; i.accept='image/*';
+  i.onchange=e=>{ if(e.target.files[0]) recognizeFile(e.target.files[0]); };
+  i.click();
+});
+document.getElementById('btnCamera').addEventListener('click', ()=>{
+  const i=document.createElement('input'); i.type='file'; i.accept='image/*'; i.capture='environment';
+  i.onchange=e=>{ if(e.target.files[0]) recognizeFile(e.target.files[0]); };
+  i.click();
+});
+</script>
+</body>
+</html>
